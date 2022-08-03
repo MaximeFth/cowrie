@@ -101,9 +101,16 @@ class UsernamePasswordIP:
         ] = OrderedDict()
         self.username: str = username
         self.password: str = password
-        self.load()
-        if self.check_login(username, password, ip):
-            self.password = hashlib.sha256(password).hexdigest()
+
+        
+        self.hashPasswords: bool = CowrieConfig.getboolean(
+            "honeypot", "hashPasswords", fallback=False
+        )
+        if self.hashPasswords:
+            self.load()
+            if self.check_login(username, password, ip):
+                self.password = hashlib.sha256(password).hexdigest()
+
         self.ip: str = ip
 
     def load(self) -> None:

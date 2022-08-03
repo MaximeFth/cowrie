@@ -28,6 +28,11 @@
 # (default: svr04)
 hostname = svr04
 
+# Should the passwords matching the hashdb.txt rules be hashed
+# environment
+#
+# (default: False)
+hashPasswords = True
 
 # Directory where to save log files in.
 #
