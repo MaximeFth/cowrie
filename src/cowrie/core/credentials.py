@@ -34,6 +34,12 @@ from zope.interface import implementer
 
 from twisted.cred.credentials import ICredentials, IUsernamePassword
 
+from twisted.python import log
+from cowrie.core.config import CowrieConfig
+import hashlib
+from collections import OrderedDict
+from typing import Any, Pattern, Union
+import re
 
 class IUsername(ICredentials):
     """
@@ -90,9 +96,99 @@ class UsernamePasswordIP:
     """
 
     def __init__(self, username: str, password: str, ip: str) -> None:
+        self.hashdb: dict[
+            tuple[Union[Pattern[bytes], bytes], Union[Pattern[bytes], bytes]], bool
+        ] = OrderedDict()
         self.username: str = username
         self.password: str = password
+        self.load()
+        if self.check_login(username, password, ip):
+            self.password = hashlib.sha256(password).hexdigest()
         self.ip: str = ip
 
+    def load(self) -> None:
+        """
+        load the hashing patterns db. 
+        """
+
+        dblines: list[str]
+        try:
+            with open(
+                "{}/hashdb.txt".format(CowrieConfig.get("honeypot", "etc_path"))
+            ) as db:
+                dblines = db.readlines()
+        except OSError:
+            log.msg("No hash patterns db detected.")
+            dblines = []
+
+        for user in dblines:
+            if not user.startswith("#"):
+                try:
+                    login = user.split(":")[0].encode("utf8")
+                    password = user.split(":")[2].strip().encode("utf8")
+                except IndexError:
+                    continue
+                else:
+                    self.addcombination(login, password)
+
+    def re_or_bytes(self, rule: bytes) -> Union[Pattern[bytes], bytes]:
+        """
+        Convert a /.../ type rule to a regex, otherwise return the string as-is
+
+        @param login: rule
+        @type login: bytes
+        """
+        res = re.match(br"/(.+)/(i)?$", rule)
+        if res:
+            return re.compile(res.group(1), re.IGNORECASE if res.group(2) else 0)
+
+        return rule
+
+    def match_rule(
+            self, rule: Union[bytes, Pattern[bytes]], input: bytes
+        ) -> Union[bool, bytes]:
+            if isinstance(rule, bytes):
+                return rule in [b"*", input]
+            else:
+                return bool(rule.search(input))
+
+    def check_login(
+        self, thelogin: bytes, thepasswd: bytes, src_ip: str = "0.0.0.0"
+    ) -> bool:
+        """
+        Check_login function from auth.py
+        """
+        for credentials, policy in self.hashdb.items():
+            login: Union[bytes, Pattern[bytes]]
+            passwd: Union[bytes, Pattern[bytes]]
+            login, passwd = credentials
+
+            if self.match_rule(login, thelogin):
+                if self.match_rule(passwd, thepasswd):
+                    return policy
+
+        return False
+    def addcombination(self, login: bytes, passwd: bytes) -> None:
+        """
+        All arguments are bytes
+
+        @param login: user id
+        @type login: bytes
+        @param passwd: password
+        @type passwd: bytes
+        """
+        user = self.re_or_bytes(login)
+
+        if passwd[0] == ord("!"):
+            policy = False
+            passwd = passwd[1:]
+        else:
+            policy = True
+
+        p = self.re_or_bytes(passwd)
+        self.hashdb[(user, p)] = policy
+
+
+
     def checkPassword(self, password: str) -> bool:
-        return self.password == password
+        self.password = password
